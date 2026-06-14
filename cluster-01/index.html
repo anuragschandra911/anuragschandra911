@@ -1,1 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scale-Out Cluster Widget — The Visual Uncomplex</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+  }
 
+  #vu-cluster-widget {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 1.5rem;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+    background: #fafafa;
+    color: #1a1a1a;
+    box-sizing: border-box;
+  }
+
+  #vu-cluster-widget * {
+    box-sizing: border-box;
+  }
+
+  .vu-controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .vu-controls button {
+    padding: 8px 14px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  .vu-controls button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  #vu-status {
+    font-size: 13px;
+    color: #666;
+    margin-bottom: 1rem;
+    min-height: 18px;
+  }
+
+  #vu-cluster {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 12px;
+    margin-bottom: 1rem;
+  }
+
+  .vu-node-card {
+    border-radius: 10px;
+    padding: 0.75rem;
+    min-height: 110px;
+  }
+
+  .vu-node-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .vu-node-title {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .vu-node-sub {
+    font-size: 11px;
+    margin: 0 0 4px;
+  }
+
+  .vu-node-sub2 {
+    font-size: 11px;
+    margin: 4px 0 0;
+  }
+
+  .vu-fragments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .vu-fragment-tag {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.6);
+  }
+
+  .vu-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .vu-stat-box {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1rem;
+  }
+
+  .vu-stat-label {
+    font-size: 13px;
+    color: #666;
+    margin: 0 0 4px;
+  }
+
+  .vu-stat-value {
+    font-size: 24px;
+    font-weight: 600;
+    margin: 0;
+  }
+</style>
+</head>
+<body>
+
+<div id="vu-cluster-widget">
+
+  <div class="vu-controls">
+    <button id="vu-addNode">+ Add node</button>
+    <button id="vu-removeNode">− Remove node</button>
+    <button id="vu-writeData">Write a file</button>
+    <button id="vu-failNode">⚠ Fail a node</button>
+    <button id="vu-resetAll">↻ Reset</button>
+  </div>
+
+  <div id="vu-status"></div>
+
+  <div id="vu-cluster"></div>
+
+  <div class="vu-stats">
+    <div class="vu-stat-box">
+      <p class="vu-stat-label">Nodes</p>
+      <p class="vu-stat-value" id="vu-nodeCount">4</p>
+    </div>
+    <div class="vu-stat-box">
+      <p class="vu-stat-label">Files written</p>
+      <p class="vu-stat-value" id="vu-fileCount">0</p>
+    </div>
+    <div class="vu-stat-box">
+      <p class="vu-stat-label">Cluster state</p>
+      <p class="vu-stat-value" id="vu-clusterState">Healthy</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  var MAX_NODES = 8;
+  var MIN_NODES = 3;
+  var nodes = [];
+  var fileCount = 0;
+  var nextFileId = 1;
+  var failedNodeIndex = null;
+
+  var colorRamps = [
+    { bg: '#EEEDFE', border: '#7F77DD', text: '#3C3489' },
+    { bg: '#E1F5EE', border: '#1D9E75', text: '#085041' },
+    { bg: '#FAECE7', border: '#D85A30', text: '#712B13' },
+    { bg: '#FBEAF0', border: '#D4537E', text: '#72243E' }
+  ];
+
+  function initNodes(n) {
+    nodes = [];
+    for (var i = 0; i < n; i++) {
+      nodes.push({ id: i, files: [] });
+    }
+  }
+
+  function setStatus(text) {
+    document.getElementById('vu-status').textContent = text;
+  }
+
+  function render() {
+    var cluster = document.getElementById('vu-cluster');
+    cluster.innerHTML = '';
+
+    nodes.forEach(function(node, i) {
+      var isFailed = (i === failedNodeIndex);
+      var ramp = colorRamps[i % colorRamps.length];
+      var card = document.createElement('div');
+      card.className = 'vu-node-card';
+
+      card.style.border = '1px solid ' + (isFailed ? '#ddd' : ramp.border);
+      card.style.opacity = isFailed ? '0.45' : '1';
+      card.style.background = isFailed ? '#f0f0f0' : ramp.bg;
+
+      var html = '<div class="vu-node-header">';
+      html += '<span class="vu-node-title" style="color:' + (isFailed ? '#888' : ramp.text) + ';">Node ' + (i + 1) + '</span>';
+      html += isFailed ? '<span>&#10005;</span>' : '<span>&#9635;</span>';
+      html += '</div>';
+
+      if (isFailed) {
+        html += '<p class="vu-node-sub" style="color:#888;">Offline</p>';
+        html += '<p class="vu-node-sub2" style="color:#999;">Data rebuilt from other nodes</p>';
+      } else {
+        html += '<p class="vu-node-sub" style="color:' + ramp.text + ';">' + node.files.length + ' fragment' + (node.files.length === 1 ? '' : 's') + '</p>';
+        html += '<div class="vu-fragments">';
+        node.files.forEach(function(f) {
+          html += '<span class="vu-fragment-tag" style="color:' + ramp.text + ';">F' + f + '</span>';
+        });
+        html += '</div>';
+      }
+
+      card.innerHTML = html;
+      cluster.appendChild(card);
+    });
+
+    document.getElementById('vu-nodeCount').textContent = nodes.length;
+    document.getElementById('vu-fileCount').textContent = fileCount;
+    document.getElementById('vu-clusterState').textContent = (failedNodeIndex !== null) ? 'Degraded' : 'Healthy';
+
+    document.getElementById('vu-removeNode').disabled = (nodes.length <= MIN_NODES);
+    document.getElementById('vu-addNode').disabled = (nodes.length >= MAX_NODES);
+    document.getElementById('vu-failNode').disabled = (failedNodeIndex !== null || nodes.length < 3);
+  }
+
+  function writeFile() {
+    var healthyNodes = [];
+    nodes.forEach(function(n, i) { if (i !== failedNodeIndex) healthyNodes.push(i); });
+
+    if (healthyNodes.length < 2) {
+      setStatus('Not enough healthy nodes to protect new data.');
+      return;
+    }
+
+    var fileId = nextFileId++;
+    fileCount++;
+
+    var shuffled = healthyNodes.slice().sort(function() { return Math.random() - 0.5; });
+    var spreadCount = Math.min(3, shuffled.length);
+
+    for (var i = 0; i < spreadCount; i++) {
+      nodes[shuffled[i]].files.push(fileId);
+    }
+
+    setStatus('File ' + fileId + ' written — split into fragments and spread across ' + spreadCount + ' nodes for protection.');
+    render();
+  }
+
+  function addNode() {
+    if (nodes.length >= MAX_NODES) return;
+    nodes.push({ id: nodes.length, files: [] });
+    setStatus('Node ' + nodes.length + ' joined the cluster. Existing data rebalances across all nodes.');
+    render();
+  }
+
+  function removeNode() {
+    if (nodes.length <= MIN_NODES) return;
+    if (failedNodeIndex === nodes.length - 1) failedNodeIndex = null;
+    nodes.pop();
+    setStatus('A node was removed. The cluster redistributes that capacity across remaining nodes.');
+    render();
+  }
+
+  function failNode() {
+    if (nodes.length < 3) return;
+    var candidates = [];
+    nodes.forEach(function(n, i) { if (i !== failedNodeIndex) candidates.push(i); });
+    var idx = candidates[Math.floor(Math.random() * candidates.length)];
+    failedNodeIndex = idx;
+    setStatus('Node ' + (idx + 1) + ' went offline. Other nodes still hold enough fragments to serve every file.');
+    render();
+  }
+
+  function resetAll() {
+    failedNodeIndex = null;
+    fileCount = 0;
+    nextFileId = 1;
+    initNodes(4);
+    setStatus('Cluster reset to 4 healthy nodes.');
+    render();
+  }
+
+  document.getElementById('vu-addNode').addEventListener('click', addNode);
+  document.getElementById('vu-removeNode').addEventListener('click', removeNode);
+  document.getElementById('vu-writeData').addEventListener('click', writeFile);
+  document.getElementById('vu-failNode').addEventListener('click', failNode);
+  document.getElementById('vu-resetAll').addEventListener('click', resetAll);
+
+  initNodes(4);
+  setStatus('Try writing a few files, then fail a node and see what happens.');
+  render();
+</script>
+
+</body>
+</html>
